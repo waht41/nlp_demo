@@ -1,0 +1,29 @@
+# configs/baseline_experiment.yaml
+# 这是基线实验的配置文件。
+# 复制并修改此文件来进行新的实验。
+
+metadata:
+  # 运行的简称，会用在文件夹命名中
+  run_name: "distilbert_baseline_lr2e-5"
+  # 对本次实验的详细文字描述，会记录在中央CSV日志中
+  description: "首次从config中读取配置，观察是否有bug"
+
+model_data:
+  # Hugging Face 上的模型标识符
+  model_checkpoint: "distilbert-base-uncased"
+  # Hugging Face 上的数据集名称
+  dataset_name: "rotten_tomatoes"
+  # 用于快速测试的采样大小 (设置为 null 或留空可使用完整数据集)
+  train_sample_size: null
+  eval_sample_size: null
+
+training:
+  # 训练超参数
+  learning_rate: 2e-5
+  num_train_epochs: 3
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 16
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  # 梯度裁剪范数
+  max_grad_norm: 1.0
