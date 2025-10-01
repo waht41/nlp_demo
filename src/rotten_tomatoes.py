@@ -40,6 +40,7 @@ Dataset({
 print("\n查看训练集的第一条样本:")
 sample = train_dataset[0]
 print(sample)
+print('label type',type(sample['label']))
 """
 输出:
 查看训练集的第一条样本:
