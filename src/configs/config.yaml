@@ -6,7 +6,7 @@ metadata:
   # 运行的简称，会用在文件夹命名中
   run_name: "distilbert_baseline_lr2e-5"
   # 对本次实验的详细文字描述，会记录在中央CSV日志中
-  description: "首次从config中读取配置，观察是否有bug"
+  description: "首次从config中读取配置，检查patch是否有bug"
 
 model_data:
   # Hugging Face 上的模型标识符

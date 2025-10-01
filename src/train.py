@@ -1,7 +1,3 @@
-# train_from_config.py
-# 主训练脚本，整合所有模块并启动训练
-# 这个版本通过读取YAML配置文件来运行，并自动记录实验摘要
-
 import os
 import yaml
 import shutil
@@ -12,10 +8,9 @@ from datetime import datetime
 
 from transformers import TrainingArguments, Trainer, AutoTokenizer
 
-# 假设这些自定义模块与此脚本在同一目录下或在Python路径中
-from src.model_handler import load_model_and_tokenizer
-from src.data_handler import load_and_prepare_dataset
-from src.metrics import compute_metrics
+from model_handler import load_model_and_tokenizer
+from data_handler import load_and_prepare_dataset
+from metrics import compute_metrics
 
 
 def get_git_info(output_dir):
@@ -66,15 +61,15 @@ def main(config_path: str):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(LOGGING_DIR, exist_ok=True)
     print(f"🚀 创建实验运行 ID: {run_id}")
-    print(f"   - 详细结果将保存至: {OUTPUT_DIR}")
-    print(f"   - TensorBoard 日志将保存至: {LOGGING_DIR}")
+    print(f"   - 模型和评估结果将保存至: {OUTPUT_DIR}")
+    print(f"   - 配置文件、代码差异和TensorBoard日志将保存至: {LOGGING_DIR}")
 
     # --- 3. 记录代码和配置状态 (为了100%可复现) ---
-    # 3.1 复制配置文件到结果目录
-    shutil.copy(config_path, os.path.join(OUTPUT_DIR, "config.yaml"))
+    # 3.1 复制配置文件到日志目录
+    shutil.copy(config_path, os.path.join(LOGGING_DIR, "config.yaml"))
 
     # 3.2 获取 Git 状态并保存代码差异
-    git_hash = get_git_info(OUTPUT_DIR)
+    git_hash = get_git_info(LOGGING_DIR)
 
     # --- 4. 加载数据集 ---
     print("\n" + "=" * 20 + " 正在加载数据集 " + "=" * 20)

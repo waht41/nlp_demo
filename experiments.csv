@@ -1,0 +1,2 @@
+run_id,timestamp,run_name,description,git_hash,model_checkpoint,dataset_name,learning_rate,epochs,batch_size,final_eval_accuracy,final_eval_loss,results_path
+2025-10-01_19-39-17_distilbert_baseline_lr2e-5,2025-10-01 19:41:33,distilbert_baseline_lr2e-5,首次从config中读取配置，检查patch是否有bug,ec2990f,distilbert-base-uncased,rotten_tomatoes,2e-5,3,16,0.8461538461538461,0.367026150226593,./results/2025-10-01_19-39-17_distilbert_baseline_lr2e-5

@@ -1,4 +1,4 @@
 .idea/
-src/results/
-src/logs/
+results/
+logs/
 __pycache__/
