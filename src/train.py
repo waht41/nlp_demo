@@ -24,8 +24,8 @@ def main():
 
     # 为日志创建名称
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    learning_rate = 1e-6
-    run_name = f"lr-{learning_rate}_{timestamp}"
+    learning_rate = 2e-5
+    run_name = f"{timestamp}_lr-{learning_rate}"
 
     # 目录配置 - 为每个训练运行创建独立文件夹
     OUTPUT_DIR = f"./results/{run_name}"
@@ -52,7 +52,6 @@ def main():
 
     print("\n--- 抽查第一个样本 ---")
     sample = train_dataset[0]
-    print(sample)
     # 确认 'labels' 键存在，并且值是一个 tensor 整数
     print(f"样本中 'labels' 的值: {sample['labels']}")
     print(f"样本中 'labels' 的数据类型: {sample['labels'].dtype}")
@@ -91,7 +90,7 @@ def main():
 
         # 日志记录
         logging_strategy="steps",
-        logging_steps=10,  # 每10步记录一次日志到控制台和TensorBoard
+        logging_steps=50,  # 每10步记录一次日志到控制台和TensorBoard
     )
 
     # --- 5. 初始化并启动训练器 ---
