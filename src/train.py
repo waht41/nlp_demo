@@ -11,6 +11,7 @@ from transformers import TrainingArguments, Trainer, AutoTokenizer
 from model_handler import load_model_and_tokenizer
 from data_handler import load_and_prepare_dataset
 from metrics import compute_metrics
+from trainer_callback import DistributionLoggingCallback
 
 
 def get_git_info(output_dir):
@@ -92,6 +93,7 @@ def main(config_path: str):
 
     # --- 6. 配置训练参数 ---
     print("\n" + "=" * 20 + " 正在配置训练参数 " + "=" * 20)
+
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
         logging_dir=LOGGING_DIR,
@@ -106,7 +108,8 @@ def main(config_path: str):
         learning_rate=float(training_cfg['learning_rate']),
         weight_decay=training_cfg.get('weight_decay', 0.0),
         max_grad_norm=training_cfg.get('max_grad_norm', 1.0),
-        warmup_ratio=training_cfg.get('warmup_ratio', 0.0),
+        warmup_ratio=training_cfg.get('warmup_ratio', 0.0),  # 从配置文件读取 warmup ratio
+        lr_scheduler_type=training_cfg.get('lr_scheduler_type', 'linear'),  # 从配置文件读取学习率调度类型
 
         # 评估、保存和日志策略
         eval_strategy="epoch",
@@ -117,6 +120,13 @@ def main(config_path: str):
     )
 
     # --- 7. 初始化并启动训练器 ---
+
+    # 根据配置决定是否添加分布记录回调
+    callbacks = []
+    if training_cfg.get('log_distribution', False):
+        print("📊 启用参数和梯度分布记录...")
+        callbacks.append(DistributionLoggingCallback())
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -124,6 +134,7 @@ def main(config_path: str):
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
         compute_metrics=compute_metrics,
+        callbacks=callbacks
     )
 
     print("\n" + "=" * 40)
