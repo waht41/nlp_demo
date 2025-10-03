@@ -6,9 +6,9 @@
 # ==============================================================================
 
 [tool.poetry]
-name = "hello-wsl"
+name = "nlp_demo"
 version = "0.1.0"
-description = "一个使用Transformers实现的简单文本分类项目。"
+description = "一个使用Transformers实现的简单文本项目。"
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 packages = [{include = "hello_wsl"}]
