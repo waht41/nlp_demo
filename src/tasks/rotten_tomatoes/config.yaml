@@ -4,13 +4,13 @@
 
 metadata:
   # 运行的简称，会用在文件夹命名中
-  run_name: "albert-base-v2_lr2e-5"
+  run_name: "roberta-base"
   # 对本次实验的详细文字描述，会记录在中央CSV日志中
-  description: "调参，扩大batch_size到32 改用cosine学习率schedule，改用albert-base-v2，学习率改为5e-6  顺带记录梯度和参数分布"
+  description: "改用roberta看看分数"
 
 model_data:
   # Hugging Face 上的模型标识符
-  model_checkpoint: "albert-base-v2"
+  model_checkpoint: "roberta-base"
   # Hugging Face 上的数据集名称
   dataset_name: "rotten_tomatoes"
   # 用于快速测试的采样大小 (设置为 null 或留空可使用完整数据集)
@@ -27,6 +27,6 @@ training:
   warmup_ratio: 0.1
   # 梯度裁剪范数
   max_grad_norm: 1.0
-  lr_scheduler_type: "cosine"
+  lr_scheduler_type: "linear"
 
   log_distribution: true # 是否记录梯度和参数分布

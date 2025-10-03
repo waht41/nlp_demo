@@ -39,19 +39,23 @@ tensorboard = "^2.19.0"   # 更新到与新版PyTorch兼容的版本
 # --- 其它 ---
 pyyaml = "^6.0.3"
 
+[tool.poetry.group.dev.dependencies]
 # ==============================================================================
 # 开发依赖 (仅在本地开发环境中使用)
 # ==============================================================================
-[tool.poetry.group.dev.dependencies]
 jupyterlab = "^4.2.3"     # 交互式开发环境
 notebook = "^7.2.1"       # 经典的Jupyter Notebook
 ruff = "^0.4.10"          # 高性能的代码检查和格式化工具 (可替代black, isort, flake8)
 pytest = "^8.2.2"         # 代码测试框架
+tbparse = "^0.0.9"
+matplotlib = "^3.10.6"
+seaborn = "^0.13.2"
 
+[build-system]
 # ==============================================================================
 # 构建系统配置 (通常无需修改)
 # ==============================================================================
-[build-system]
+
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
