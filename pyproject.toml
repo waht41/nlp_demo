@@ -25,7 +25,7 @@ torchvision = {version = "^0.18.1", source = "pytorch_cu121"}
 torchaudio = {version = "^2.3.1", source = "pytorch_cu121"}
 
 # --- Hugging Face 核心生态 ---
-transformers = "^4.55.0"
+transformers = "4.43"
 accelerate = "^1.10.0"
 datasets = "^4.0.0"
 evaluate = "^0.4.6"       # HuggingFace的评估库

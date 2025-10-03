@@ -4,15 +4,19 @@ import shutil
 import argparse
 import pandas as pd
 from datetime import datetime
-import importlib  # 关键：用于动态导入模块
-
+import importlib
 from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForSequenceClassification
 from trainer_callback import DistributionLoggingCallback
 from utils.git import get_git_info
 
 # --- 主函数开始 ---
-def main(task_name: str):
-    """主函数，从指定的任务目录执行完整的训练和评估流程"""
+def main(task_name: str, resume_from: str = None):
+    """主函数，从指定的任务目录执行完整的训练和评估流程
+    
+    Args:
+        task_name: 要执行的任务名称
+        resume_from: 可选，指定要从哪个检查点继续训练
+    """
 
     # --- 1. 动态加载任务模块和配置 ---
     print(f"🚀 开始执行任务: {task_name}")
@@ -75,10 +79,22 @@ def main(task_name: str):
 
     # --- 5. 加载模型 (可以简化为一个通用函数) ---
     print("\n" + "=" * 20 + " 正在加载模型 " + "=" * 20)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_data_cfg['model_checkpoint'],
-        num_labels=num_labels
-    )
+    
+    # 如果指定了恢复训练的检查点
+    if resume_from:
+        if not os.path.exists(resume_from):
+            raise ValueError(f"指定的检查点路径不存在: {resume_from}")
+        print(f"📂 从检查点加载模型: {resume_from}")
+        model = AutoModelForSequenceClassification.from_pretrained(
+            resume_from,
+            num_labels=num_labels
+        )
+    else:
+        print(f"🔄 从预训练模型加载: {model_data_cfg['model_checkpoint']}")
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_data_cfg['model_checkpoint'],
+            num_labels=num_labels
+        )
 
     # --- 6. 配置训练参数 (这部分完全通用，无需修改) ---
     print("\n" + "=" * 20 + " 正在配置训练参数 " + "=" * 20)
@@ -126,7 +142,14 @@ def main(task_name: str):
 
     # ... [你原来的训练、评估、保存总结的逻辑完全不变] ...
     print("\n" + "=" * 40 + "\n          🔥 开始模型训练 🔥          \n" + "=" * 40 + "\n")
-    trainer.train()
+    
+    # 如果指定了恢复训练的检查点，从检查点恢复训练状态
+    if resume_from:
+        print(f"🔄 从检查点恢复训练状态: {resume_from}")
+        trainer.train(resume_from_checkpoint=resume_from)
+    else:
+        trainer.train()
+        
     print("\n" + "=" * 40 + "\n          ✅ 训练完成 ✅          \n" + "=" * 40 + "\n")
 
     print("在最终评估集上进行评估...")
@@ -149,6 +172,7 @@ def main(task_name: str):
         'final_eval_accuracy': final_metrics.get('eval_accuracy'),
         'final_eval_loss': final_metrics.get('eval_loss'),
         'results_path': OUTPUT_DIR,
+        'addition': f'train from {resume_from}' if resume_from else '',
     }
 
     log_file = "./experiments.csv"
@@ -179,5 +203,10 @@ if __name__ == "__main__":
         required=True,
         help="要执行的任务名称 (必须是 tasks/ 目录下的一个子文件夹名，例如: rotten_tomatoes)"
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        help="指定检查点文件夹路径，从该检查点继续训练"
+    )
     args = parser.parse_args()
-    main(args.task)
+    main(args.task, args.resume)
