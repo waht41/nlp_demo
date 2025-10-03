@@ -130,7 +130,6 @@ def main(task_name: str):
     print("最终评估结果:", final_metrics)
 
     # ... [保存 summary 到 experiments.csv 的逻辑] ...
-    # 建议在 summary 中加入 task_name 字段
     summary = {
         'task': task_name,
         'run_id': run_id,
@@ -153,9 +152,9 @@ def main(task_name: str):
 
     # 线程安全地追加到 CSV 文件
     if not os.path.exists(log_file):
-        summary_df.to_csv(log_file, index=False)
+        summary_df.to_csv(log_file, index=False, encoding='utf-8-sig')
     else:
-        summary_df.to_csv(log_file, mode='a', header=False, index=False)
+        summary_df.to_csv(log_file, mode='a', header=False, index=False, encoding='utf-8-sig')
 
     print("\n" + "=" * 40)
     print(f"   📊 实验总结已记录到中央日志: {log_file}   ")
