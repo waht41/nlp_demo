@@ -25,9 +25,13 @@ def main(task_name: str):
         # 动态导入特定任务的数据处理和评估模块
         data_handler_module = importlib.import_module(f"tasks.{task_name}.data_handler")
         metrics_module = importlib.import_module(f"tasks.{task_name}.metrics")
-    except ModuleNotFoundError:
-        print(f"错误: 任务 '{task_name}' 不存在或其目录结构不完整。")
-        print("请确保 tasks/ 目录下有对应的任务文件夹，且包含 data_handler.py 和 metrics.py。")
+    except ModuleNotFoundError as e:
+        print(f"错误: 导入任务 '{task_name}' 相关模块时失败。")
+        print(f"具体错误: {str(e)}")
+        print("可能的原因:")
+        print("1. tasks/ 目录下没有对应的任务文件夹")
+        print("2. 任务文件夹中缺少必需的 data_handler.py 或 metrics.py 文件")
+        print("3. 任务模块中引用的依赖包未安装，请检查 requirements.txt 并安装所需依赖")
         return
 
     print(f"📖 从 '{config_path}' 加载配置...")
