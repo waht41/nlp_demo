@@ -16,12 +16,12 @@ def load_and_prepare_dataset(dataset_name, tokenizer, train_sample_size=None, ev
 
     def preprocess_function(examples):
         # 对输入文章进行分词 (只做截断，不做填充)
-        model_inputs = tokenizer(examples["article"], max_length=max_source_length, truncation=True, padding=True)
+        model_inputs = tokenizer(examples["article"], max_length=max_source_length, truncation=True)
 
         # 对目标摘要进行分词 (作为标签)
         with tokenizer.as_target_tokenizer():
             # 这里也不做填充
-            labels = tokenizer(examples["highlights"], max_length=max_target_length, truncation=True, padding=True)
+            labels = tokenizer(examples["highlights"], max_length=max_target_length, truncation=True)
 
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs

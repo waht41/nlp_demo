@@ -9,7 +9,8 @@ from functools import partial
 from transformers import (
     TrainingArguments, Trainer, 
     Seq2SeqTrainingArguments, Seq2SeqTrainer,
-    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM
+    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM,
+    DataCollatorForSeq2Seq
 )
 from trainer_callback import DistributionLoggingCallback
 from utils.git import get_git_info
@@ -160,8 +161,18 @@ def main(task_name: str, resume_from: str = None):
         print("📊 启用参数和梯度分布记录...")
         callbacks.append(DistributionLoggingCallback())
 
-    # 根据任务类型选择 Trainer
-    TrainerClass = Seq2SeqTrainer if task_type == 'seq2seq' else Trainer
+    # 根据任务类型选择 Trainer 和 DataCollator
+    if task_type == 'seq2seq':
+        TrainerClass = Seq2SeqTrainer
+        # 为 seq2seq 任务创建 DataCollatorForSeq2Seq
+        data_collator = DataCollatorForSeq2Seq(
+            tokenizer=tokenizer,
+            model=model,
+            padding=True,
+        )
+    else:
+        TrainerClass = Trainer
+        data_collator = None  # 分类任务使用默认的data collator
     
     trainer = TrainerClass(
         model=model,
@@ -169,6 +180,7 @@ def main(task_name: str, resume_from: str = None):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
+        data_collator=data_collator,  # 传递data collator
         compute_metrics=compute_metrics_fn,  # 传递新创建的函数
         callbacks=callbacks
     )
