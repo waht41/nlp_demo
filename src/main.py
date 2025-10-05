@@ -138,7 +138,7 @@ def main(task_name: str, resume_from: str = None):
         'save_strategy': "epoch",
         'load_best_model_at_end': True,
         'logging_strategy': "steps",
-        'logging_steps': 50,
+        'logging_steps': training_cfg.get('logging_steps', 50),
     }
 
     if task_type == 'seq2seq':
