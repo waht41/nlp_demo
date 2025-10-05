@@ -140,6 +140,8 @@ def main(task_name: str, resume_from: str = None):
         'load_best_model_at_end': True,
         'logging_strategy': "steps",
         'logging_steps': training_cfg.get('logging_steps', 50),
+        'fp16': training_cfg.get('fp16', True),
+        'torch_compile': training_cfg.get('torch_compile', False),
     }
 
     if task_type == 'seq2seq':
@@ -165,11 +167,21 @@ def main(task_name: str, resume_from: str = None):
     if task_type == 'seq2seq':
         TrainerClass = Seq2SeqTrainer
         # 为 seq2seq 任务创建 DataCollatorForSeq2Seq
-        data_collator = DataCollatorForSeq2Seq(
-            tokenizer=tokenizer,
-            model=model,
-            padding=True,
-        )
+        if training_cfg.get('torch_compile', False):
+            data_collator = DataCollatorForSeq2Seq(
+                tokenizer=tokenizer,
+                model=model,
+                padding="max_length",
+                pad_to_multiple_of=8,
+                max_length=model_data_cfg.get('max_source_length', 1024),
+            )
+        else:
+            data_collator = DataCollatorForSeq2Seq(
+                tokenizer=tokenizer,
+                model=model,
+                padding=True,
+                pad_to_multiple_of=8,
+            )
     else:
         TrainerClass = Trainer
         data_collator = None  # 分类任务使用默认的data collator

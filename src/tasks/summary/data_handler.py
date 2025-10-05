@@ -1,6 +1,6 @@
 # tasks/cnndm_summarization/data_handler.py
 from datasets import load_dataset
-
+import os
 
 def load_and_prepare_dataset(dataset_name, tokenizer, train_sample_size=None, eval_sample_size=None,
                              max_source_length=1024, max_target_length=128, **kwargs):
@@ -27,7 +27,7 @@ def load_and_prepare_dataset(dataset_name, tokenizer, train_sample_size=None, ev
         return model_inputs
 
     # 应用预处理函数
-    tokenized_datasets = dataset.map(preprocess_function, batched=True, remove_columns=["article", "highlights", "id"])
+    tokenized_datasets = dataset.map(preprocess_function, batched=True, remove_columns=["article", "highlights", "id"], num_proc=os.cpu_count(),)
 
     # 对于S2S任务，num_labels 不适用，返回 None
     return tokenized_datasets["train"], tokenized_datasets["validation"], None

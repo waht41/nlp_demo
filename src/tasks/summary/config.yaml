@@ -23,3 +23,4 @@ training:
   lr_scheduler_type: 'linear'
   log_distribution: false
   logging_steps: 100
+  torch_compile: false
