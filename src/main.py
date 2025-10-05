@@ -53,6 +53,10 @@ def main(task_name: str, resume_from: str = None):
 
     # 读取任务类型，这是关键！
     task_type = model_data_cfg.get('task_type', 'classification')
+    if task_type and task_type not in ['classification', 'seq2seq']:
+        print('未知任务类型')
+        return
+
     print(f"检测到任务类型: {task_type}")
 
     # --- 2. 创建唯一的实验目录和ID ---

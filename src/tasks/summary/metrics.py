@@ -13,30 +13,24 @@ def compute_metrics(eval_pred, tokenizer):
     # 确保所有 token ID 都在有效范围内
     vocab_size = tokenizer.vocab_size
     
-    # 检查并报告无效的 token ID
+    # 检查是否有真正的错误（排除 -100，这是 transformers 内部使用的特殊值）
     invalid_mask = (predictions < 0) | (predictions >= vocab_size)
+    # 排除 -100，因为这是 transformers 内部使用的特殊值
+    invalid_mask = invalid_mask & (predictions != -100)
+    
     if np.any(invalid_mask):
         invalid_count = np.sum(invalid_mask)
         invalid_values = predictions[invalid_mask]
-        print(f"警告: 发现 {invalid_count} 个无效的 token ID，范围: [{np.min(invalid_values)}, {np.max(invalid_values)}]")
+        print(f"错误: 发现 {invalid_count} 个无效的 token ID，范围: [{np.min(invalid_values)}, {np.max(invalid_values)}]")
         print(f"词汇表大小: {vocab_size}")
+        print("停止计算，返回空结果")
+        return {}
     
-    predictions = np.where(
-        (predictions >= 0) & (predictions < vocab_size), 
-        predictions, 
-        tokenizer.pad_token_id
-    )
+    # -100 是一个特殊值，用于在标签中标记被忽略的 token（如 padding），需要替换掉
+    predictions = np.where(predictions == -100, tokenizer.pad_token_id, predictions)
     
     # 将生成的 token ID 解码成文本
-    # -100 是一个特殊值，用于在标签中标记被忽略的 token（如 padding），需要替换掉
-    try:
-        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-    except OverflowError:
-        print(f"OverflowError: 解码 predictions 时出错")
-        print(f"predictions 形状: {predictions.shape}")
-        print(f"predictions 数据类型: {predictions.dtype}")
-        print(f"predictions 范围: [{np.min(predictions)}, {np.max(predictions)}]")
-        raise
+    decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
     
     labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
     decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
