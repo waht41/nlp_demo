@@ -1,0 +1,24 @@
+metadata:
+  run_name: bart_cnndm_finetune
+  description: "使用 BART-large 对 CNN/DailyMail 数据集进行微调以进行文本总结"
+
+model_data:
+  task_type: seq2seq  # <-- 关键！指定任务类型
+  model_checkpoint: facebook/bart-base
+  dataset_name: cnn_dailymail
+  dataset_config_name: 3.0.0
+  train_sample_size: 100  # 使用一小部分数据进行快速实验
+  eval_sample_size: 20
+  max_source_length: 1024
+  max_target_length: 128
+
+training:
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  learning_rate: 2e-5 # S2S 任务通常用稍小的学习率
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  lr_scheduler_type: 'linear'
+  log_distribution: false

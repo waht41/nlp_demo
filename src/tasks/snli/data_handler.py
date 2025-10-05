@@ -1,6 +1,6 @@
 from datasets import load_dataset
 
-def load_and_prepare_dataset(dataset_name: str, tokenizer, train_sample_size=None, eval_sample_size=None):
+def load_and_prepare_dataset(dataset_name: str, tokenizer, train_sample_size=None, eval_sample_size=None, **kwargs):
     """
     专门为 SNLI (或类似的句子对NLI任务) 加载和预处理数据。
     处理流程：

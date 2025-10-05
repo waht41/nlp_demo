@@ -5,7 +5,12 @@ import argparse
 import pandas as pd
 from datetime import datetime
 import importlib
-from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForSequenceClassification
+from functools import partial
+from transformers import (
+    TrainingArguments, Trainer, 
+    Seq2SeqTrainingArguments, Seq2SeqTrainer,
+    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM
+)
 from trainer_callback import DistributionLoggingCallback
 from utils.git import get_git_info
 
@@ -46,6 +51,10 @@ def main(task_name: str, resume_from: str = None):
     model_data_cfg = config.get('model_data', {})
     training_cfg = config.get('training', {})
 
+    # 读取任务类型，这是关键！
+    task_type = model_data_cfg.get('task_type', 'classification')
+    print(f"检测到任务类型: {task_type}")
+
     # --- 2. 创建唯一的实验目录和ID ---
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     # 让run_id包含任务名，更清晰
@@ -68,75 +77,95 @@ def main(task_name: str, resume_from: str = None):
     print("\n" + "=" * 20 + " 正在加载数据集 " + "=" * 20)
     tokenizer = AutoTokenizer.from_pretrained(model_data_cfg['model_checkpoint'])
 
-    # 调用特定任务的 data_handler
-    train_dataset, eval_dataset, num_labels = data_handler_module.load_and_prepare_dataset(
-        dataset_name=model_data_cfg['dataset_name'],
-        tokenizer=tokenizer,
-        train_sample_size=model_data_cfg.get('train_sample_size'),
-        eval_sample_size=model_data_cfg.get('eval_sample_size')
-    )
-    print(f"从数据集中推断出的 num_labels: {num_labels}")
-
-    # --- 5. 加载模型 (可以简化为一个通用函数) ---
-    print("\n" + "=" * 20 + " 正在加载模型 " + "=" * 20)
+    # 这里 data_handler.py 内部会处理不同任务的逻辑
+    # 封装通用参数，避免重复
+    common_dataset_args = {
+        'dataset_name': model_data_cfg['dataset_name'],
+        'tokenizer': tokenizer,
+        'train_sample_size': model_data_cfg.get('train_sample_size'),
+        'eval_sample_size': model_data_cfg.get('eval_sample_size'),
+        'dataset_config_name': model_data_cfg.get('dataset_config_name'),
+    }
     
-    # 如果指定了恢复训练的检查点
-    if resume_from:
-        if not os.path.exists(resume_from):
-            raise ValueError(f"指定的检查点路径不存在: {resume_from}")
-        print(f"📂 从检查点加载模型: {resume_from}")
-        model = AutoModelForSequenceClassification.from_pretrained(
-            resume_from,
-            num_labels=num_labels
+    if task_type == 'seq2seq':
+        # 只有 seq2seq 任务才传递这两个参数
+        datasets_and_labels = data_handler_module.load_and_prepare_dataset(
+            **common_dataset_args,
+            max_source_length=model_data_cfg.get('max_source_length'), # 为 S2S 任务增加参数
+            max_target_length=model_data_cfg.get('max_target_length')  # 为 S2S 任务增加参数
         )
     else:
-        print(f"🔄 从预训练模型加载: {model_data_cfg['model_checkpoint']}")
-        model = AutoModelForSequenceClassification.from_pretrained(
-            model_data_cfg['model_checkpoint'],
-            num_labels=num_labels
-        )
+        # 分类任务使用原有的参数
+        datasets_and_labels = data_handler_module.load_and_prepare_dataset(**common_dataset_args)
+    # 对于分类任务，返回 (train, eval, num_labels)
+    # 对于S2S任务，可以约定返回 (train, eval, None) 因为 num_labels 不适用
+    train_dataset, eval_dataset, num_labels = datasets_and_labels
+    if num_labels:
+        print(f"从数据集中推断出的 num_labels: {num_labels}")
 
-    # --- 6. 配置训练参数 (这部分完全通用，无需修改) ---
+    # --- 5. 根据 task_type 加载模型 ---
+    print("\n" + "=" * 20 + " 正在加载模型 " + "=" * 20)
+    model_path = resume_from if resume_from else model_data_cfg['model_checkpoint']
+    print(f"📂 从 '{model_path}' 加载...")
+
+    if task_type == 'seq2seq':
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+    else: # 默认为 classification
+        model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
+
+    # --- 6. 根据 task_type 配置训练参数 ---
     print("\n" + "=" * 20 + " 正在配置训练参数 " + "=" * 20)
+    
+    # 通用参数
+    common_args = {
+        'output_dir': OUTPUT_DIR,
+        'logging_dir': LOGGING_DIR,
+        'report_to': "tensorboard",
+        'run_name': run_id,
+        'num_train_epochs': training_cfg['num_train_epochs'],
+        'per_device_train_batch_size': training_cfg['per_device_train_batch_size'],
+        'per_device_eval_batch_size': training_cfg.get('per_device_eval_batch_size', training_cfg['per_device_train_batch_size']),
+        'learning_rate': float(training_cfg['learning_rate']),
+        'weight_decay': training_cfg.get('weight_decay', 0.0),
+        'max_grad_norm': training_cfg.get('max_grad_norm', 1.0),
+        'warmup_ratio': training_cfg.get('warmup_ratio', 0.0),
+        'lr_scheduler_type': training_cfg.get('lr_scheduler_type', 'linear'),
+        'eval_strategy': "epoch",
+        'save_strategy': "epoch",
+        'load_best_model_at_end': True,
+        'logging_strategy': "steps",
+        'logging_steps': 50,
+    }
 
-    training_args = TrainingArguments(
-        output_dir=OUTPUT_DIR,
-        logging_dir=LOGGING_DIR,
-        report_to="tensorboard",
-        run_name=run_id,
+    if task_type == 'seq2seq':
+        # S2S 任务特有的参数
+        seq2seq_extra_args = {
+            'predict_with_generate': True,
+            'generation_max_length': model_data_cfg.get('max_target_length', 128) # 生成摘要的最大长度
+        }
+        training_args = Seq2SeqTrainingArguments(**common_args, **seq2seq_extra_args)
+        compute_metrics_fn = partial(metrics_module.compute_metrics, tokenizer=tokenizer)
 
-        # 从配置文件中读取训练参数
-        num_train_epochs=training_cfg['num_train_epochs'],
-        per_device_train_batch_size=training_cfg['per_device_train_batch_size'],
-        per_device_eval_batch_size=training_cfg.get('per_device_eval_batch_size',
-                                                    training_cfg['per_device_train_batch_size']),
-        learning_rate=float(training_cfg['learning_rate']),
-        weight_decay=training_cfg.get('weight_decay', 0.0),
-        max_grad_norm=training_cfg.get('max_grad_norm', 1.0),
-        warmup_ratio=training_cfg.get('warmup_ratio', 0.0),  # 从配置文件读取 warmup ratio
-        lr_scheduler_type=training_cfg.get('lr_scheduler_type', 'linear'),  # 从配置文件读取学习率调度类型
+    else:
+        training_args = TrainingArguments(**common_args)
+        compute_metrics_fn = metrics_module.compute_metrics
 
-        # 评估、保存和日志策略
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        logging_strategy="steps",
-        logging_steps=50,
-    )
-
-    # --- 7. 初始化并启动训练器 (调用动态导入的模块) ---
+    # --- 7. 初始化 Trainer (优雅地处理 compute_metrics) ---
     callbacks = []
     if training_cfg.get('log_distribution', False):
         print("📊 启用参数和梯度分布记录...")
         callbacks.append(DistributionLoggingCallback())
 
-    trainer = Trainer(
+    # 根据任务类型选择 Trainer
+    TrainerClass = Seq2SeqTrainer if task_type == 'seq2seq' else Trainer
+    
+    trainer = TrainerClass(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
-        compute_metrics=metrics_module.compute_metrics,  # 调用特定任务的 compute_metrics
+        compute_metrics=compute_metrics_fn,  # 传递新创建的函数
         callbacks=callbacks
     )
 

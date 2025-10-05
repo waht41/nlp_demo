@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def load_and_prepare_dataset(dataset_name, tokenizer, text_column="text", label_column="label", train_sample_size=None,
-                             eval_sample_size=None, max_length=512):
+                             eval_sample_size=None, max_length=512, **kwargs):
     """
     从Hugging Face Hub加载数据集，进行采样和分词处理。
 

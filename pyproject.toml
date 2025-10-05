@@ -38,6 +38,9 @@ tensorboard = "^2.19.0"   # 更新到与新版PyTorch兼容的版本
 
 # --- 其它 ---
 pyyaml = "^6.0.3"
+bertopic = "^0.17.3"
+rouge-score = "^0.1.2"
+pysbd = "^0.3.4"
 
 [tool.poetry.group.dev.dependencies]
 # ==============================================================================
