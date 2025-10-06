@@ -143,6 +143,7 @@ def main(task_name: str, resume_from: str = None):
         'eval_strategy': training_cfg.get('eval_strategy', 'epoch'),
         'eval_steps': training_cfg.get('eval_steps') if training_cfg.get('eval_strategy', 'epoch') == 'steps' else None,
         'save_strategy': training_cfg.get('eval_strategy', 'epoch'),
+        'save_steps': training_cfg.get('save_steps', None) if training_cfg.get('eval_strategy', 'epoch') == 'steps' else None,
         'load_best_model_at_end': True,
         'logging_strategy': "steps",
         'logging_steps': training_cfg.get('logging_steps', 50),
