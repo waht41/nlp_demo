@@ -1,0 +1,30 @@
+metadata:
+  run_name: "mt5-small-finetune-opus100"
+  description: "使用 opus-100 数据集对 mt5-small 模型进行中英双向翻译微调。"
+
+model_data:
+  task_type: "seq2seq"
+  model_checkpoint: "google/mt5-small"
+  force_contiguous: true
+  dataset_name: "Helsinki-NLP/opus-100" # 数据集在 Hugging Face Hub 上的名称
+  dataset_config_name: "en-zh"         # 指定加载 en-zh 语言对的子集
+  train_sample_size: 1000
+  eval_sample_size: 100
+  max_source_length: 128
+  max_target_length: 128
+
+training:
+  optimizer: 'adafactor'
+  num_train_epochs: 3
+  learning_rate: 2e-5 # 提供一个名义上的学习率，Adafactor通常会忽略它
+  gradient_accumulation_steps: 4
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  lr_scheduler_type: "linear" #禁用学习率调度，让Adafactor全权管理
+  logging_steps: 25
+  fp16: false #开启半精度会导致 grad_nrom为nan 无法训练
+  torch_compile: false
+  log_distribution: false

@@ -118,6 +118,9 @@ def main(task_name: str, resume_from: str = None):
     else: # 默认为 classification
         model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
 
+    if model_data_cfg.get('force_contiguous', False):
+        for param in model.parameters(): param.data = param.data.contiguous()
+
     # --- 6. 根据 task_type 配置训练参数 ---
     print("\n" + "=" * 20 + " 正在配置训练参数 " + "=" * 20)
     
@@ -127,6 +130,8 @@ def main(task_name: str, resume_from: str = None):
         'logging_dir': LOGGING_DIR,
         'report_to': "tensorboard",
         'run_name': run_id,
+        'optim': training_cfg.get('optimizer', 'adamw_torch'),
+        'gradient_accumulation_steps': training_cfg.get('gradient_accumulation_steps', 1),
         'num_train_epochs': training_cfg['num_train_epochs'],
         'per_device_train_batch_size': training_cfg['per_device_train_batch_size'],
         'per_device_eval_batch_size': training_cfg.get('per_device_eval_batch_size', training_cfg['per_device_train_batch_size']),
@@ -223,7 +228,7 @@ def main(task_name: str, resume_from: str = None):
         'git_hash': git_hash,
         'model_checkpoint': model_data_cfg['model_checkpoint'],
         'dataset_name': model_data_cfg['dataset_name'],
-        'learning_rate': training_cfg['learning_rate'],
+        'learning_rate': training_cfg.get('learning_rate'),
         'epochs': training_cfg['num_train_epochs'],
         'batch_size': training_cfg['per_device_train_batch_size'],
         'final_eval_accuracy': final_metrics.get('eval_accuracy'),
