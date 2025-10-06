@@ -19,7 +19,7 @@ model_data:
   eval_sample_size: 100
 
   # CausalLM 任务需要此参数，用于分词时的文本截断
-  max_length: 512
+  max_length: 1024
 
 training:
   optimizer: "adamw_torch"

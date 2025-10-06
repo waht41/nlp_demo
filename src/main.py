@@ -101,6 +101,10 @@ def main(task_name: str, resume_from: str = None):
         )
     elif task_type == 'causalLM':
         # 为 causalLM 任务设置 pad_token
+        # 确保 tokenizer 有 eos_token
+        if tokenizer.eos_token is None:
+            tokenizer.eos_token = "<|endoftext|>"
+            print('添加eos_token <|endoftext|>')
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         # causalLM 任务传递最大长度参数
