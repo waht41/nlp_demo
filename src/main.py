@@ -9,8 +9,8 @@ from functools import partial
 from transformers import (
     TrainingArguments, Trainer, 
     Seq2SeqTrainingArguments, Seq2SeqTrainer,
-    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM,
-    DataCollatorForSeq2Seq
+    AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM, AutoModelForCausalLM,
+    DataCollatorForSeq2Seq, DataCollatorForLanguageModeling
 )
 from trainer_callback import DistributionLoggingCallback
 from utils.git import get_git_info
@@ -54,7 +54,7 @@ def main(task_name: str, resume_from: str = None):
 
     # 读取任务类型，这是关键！
     task_type = model_data_cfg.get('task_type', 'classification')
-    if task_type and task_type not in ['classification', 'seq2seq']:
+    if task_type and task_type not in ['classification', 'seq2seq', 'causalLM']:
         print('未知任务类型')
         return
 
@@ -99,6 +99,16 @@ def main(task_name: str, resume_from: str = None):
             max_source_length=model_data_cfg.get('max_source_length'), # 为 S2S 任务增加参数
             max_target_length=model_data_cfg.get('max_target_length')  # 为 S2S 任务增加参数
         )
+    elif task_type == 'causalLM':
+        # 为 causalLM 任务设置 pad_token
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        # causalLM 任务传递最大长度参数
+        datasets_and_labels = data_handler_module.load_and_prepare_dataset(
+            **common_dataset_args,
+            max_length=model_data_cfg.get('max_length', 512)  # 为 causalLM 任务增加参数
+        )
+
     else:
         # 分类任务使用原有的参数
         datasets_and_labels = data_handler_module.load_and_prepare_dataset(**common_dataset_args)
@@ -115,6 +125,8 @@ def main(task_name: str, resume_from: str = None):
 
     if task_type == 'seq2seq':
         model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+    elif task_type == 'causalLM':
+        model = AutoModelForCausalLM.from_pretrained(model_path)
     else: # 默认为 classification
         model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
 
@@ -159,7 +171,10 @@ def main(task_name: str, resume_from: str = None):
         }
         training_args = Seq2SeqTrainingArguments(**common_args, **seq2seq_extra_args)
         compute_metrics_fn = partial(metrics_module.compute_metrics, tokenizer=tokenizer)
-
+    elif task_type == 'causalLM':
+        # causalLM 任务使用标准训练参数
+        training_args = TrainingArguments(**common_args)
+        compute_metrics_fn = metrics_module.compute_metrics
     else:
         training_args = TrainingArguments(**common_args)
         compute_metrics_fn = metrics_module.compute_metrics
@@ -189,6 +204,14 @@ def main(task_name: str, resume_from: str = None):
                 padding=True,
                 pad_to_multiple_of=8,
             )
+    elif task_type == 'causalLM':
+        TrainerClass = Trainer
+        # 为 causalLM 任务创建 DataCollatorForLanguageModeling
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=False,  # 对于 causalLM，我们使用 CLM (Causal Language Modeling)，不是 MLM
+            pad_to_multiple_of=8,
+        )
     else:
         TrainerClass = Trainer
         data_collator = None  # 分类任务使用默认的data collator

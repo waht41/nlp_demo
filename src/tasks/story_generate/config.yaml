@@ -1,0 +1,45 @@
+# tasks/story_generation/config.yaml
+
+metadata:
+  run_name: "gpt2_story_writing"
+  description: "Finetuning the GPT-2 model on the euclaise/writingprompts dataset for story generation."
+
+model_data:
+  # 关键！将任务类型设置为 causalLM
+  task_type: "causalLM"
+  # 使用英文预训练模型
+  model_checkpoint: "gpt2"
+  # 使用英文故事数据集
+  dataset_name: "euclaise/writingprompts"
+  dataset_config_name: null # 这个数据集没有特定的配置名
+
+  # 数据集采样大小 (为了快速演示)
+  # 在正式训练时可以设置为 null 来使用全部数据
+  train_sample_size: 1000
+  eval_sample_size: 100
+
+  # CausalLM 任务需要此参数，用于分词时的文本截断
+  max_length: 512
+
+training:
+  optimizer: "adamw_torch"
+  num_train_epochs: 3 # 为快速演示设为1，可调整为3或更高
+  learning_rate: 5.0e-5 # 5e-5 是一个常用的初始学习率
+  weight_decay: 0.01
+
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8 # 有效批量大小 = 2 * 8 = 16
+
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+
+  eval_strategy: "epoch" # 每个 epoch 结束后进行评估
+  save_strategy: "epoch" # 与评估策略保持一致
+
+  logging_steps: 50
+  fp16: true # 如果你的 GPU 支持，可以加速训练
+  torch_compile: false # Pytorch 2.0+ 特性，可加速，但可能不稳定
+
+  # 是否记录模型参数和梯度的分布（会增加日志文件大小）
+  log_distribution: false
