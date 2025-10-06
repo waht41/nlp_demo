@@ -15,8 +15,8 @@ model_data:
 
   # 数据集采样大小 (为了快速演示)
   # 在正式训练时可以设置为 null 来使用全部数据
-  train_sample_size: 1000
-  eval_sample_size: 100
+  train_sample_size: 100
+  eval_sample_size: 20
 
   # CausalLM 任务需要此参数，用于分词时的文本截断
   max_length: 1024
@@ -28,7 +28,7 @@ training:
   weight_decay: 0.01
 
   per_device_train_batch_size: 2
-  per_device_eval_batch_size: 4
+  per_device_eval_batch_size: 2
   gradient_accumulation_steps: 8 # 有效批量大小 = 2 * 8 = 16
 
   warmup_ratio: 0.1
@@ -37,9 +37,13 @@ training:
   eval_strategy: "epoch" # 每个 epoch 结束后进行评估
   save_strategy: "epoch" # 与评估策略保持一致
 
-  logging_steps: 50
+  logging_steps: 3
   fp16: true # 如果你的 GPU 支持，可以加速训练
   torch_compile: false # Pytorch 2.0+ 特性，可加速，但可能不稳定
 
   # 是否记录模型参数和梯度的分布（会增加日志文件大小）
   log_distribution: false
+  
+  # 性能优化参数
+  ignore_compute_metric: true  # 是否忽略计算metrics（避免OOM）
+  log_ppl: true  # 是否使用PerplexityLoggingCallback记录困惑度

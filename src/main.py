@@ -12,7 +12,7 @@ from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM, AutoModelForCausalLM,
     DataCollatorForSeq2Seq, DataCollatorForLanguageModeling
 )
-from trainer_callback import DistributionLoggingCallback
+from trainer_callback import DistributionLoggingCallback, PerplexityLoggingCallback
 from utils.git import get_git_info
 
 # --- 主函数开始 ---
@@ -31,10 +31,36 @@ def main(task_name: str, resume_from: str = None):
     config_path = os.path.join(TASKS_DIR,task_name, "config.yaml")
 
 
+    # 先加载配置，然后根据配置决定是否需要导入metrics模块
+    print(f"📖 从 '{config_path}' 加载配置...")
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    metadata_cfg = config.get('metadata', {})
+    model_data_cfg = config.get('model_data', {})
+    training_cfg = config.get('training', {})
+    
+    # 读取任务类型，这是关键！
+    task_type = model_data_cfg.get('task_type', 'classification')
+    if task_type and task_type not in ['classification', 'seq2seq', 'causalLM']:
+        print('未知任务类型')
+        return
+
+    print(f"检测到任务类型: {task_type}")
+
     try:
-        # 动态导入特定任务的数据处理和评估模块
+        # 动态导入特定任务的数据处理模块（必需）
         data_handler_module = importlib.import_module(f"tasks.{task_name}.data_handler")
-        metrics_module = importlib.import_module(f"tasks.{task_name}.metrics")
+        
+        # 根据配置决定是否需要导入metrics模块
+        ignore_metrics = training_cfg.get('ignore_compute_metric', False)
+        
+        if not ignore_metrics:
+            metrics_module = importlib.import_module(f"tasks.{task_name}.metrics")
+        else:
+            metrics_module = None
+            print("📊 跳过metrics模块导入（根据配置ignore_compute_metric=true）")
+            
     except ModuleNotFoundError as e:
         print(f"错误: 导入任务 '{task_name}' 相关模块时失败。")
         print(f"具体错误: {str(e)}")
@@ -43,22 +69,6 @@ def main(task_name: str, resume_from: str = None):
         print("2. 任务文件夹中缺少必需的 data_handler.py 或 metrics.py 文件")
         print("3. 任务模块中引用的依赖包未安装，请检查 requirements.txt 并安装所需依赖")
         return
-
-    print(f"📖 从 '{config_path}' 加载配置...")
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    metadata_cfg = config.get('metadata', {})
-    model_data_cfg = config.get('model_data', {})
-    training_cfg = config.get('training', {})
-
-    # 读取任务类型，这是关键！
-    task_type = model_data_cfg.get('task_type', 'classification')
-    if task_type and task_type not in ['classification', 'seq2seq', 'causalLM']:
-        print('未知任务类型')
-        return
-
-    print(f"检测到任务类型: {task_type}")
 
     # --- 2. 创建唯一的实验目录和ID ---
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -167,6 +177,9 @@ def main(task_name: str, resume_from: str = None):
         'torch_compile': training_cfg.get('torch_compile', False),
     }
 
+    # 创建compute_metrics函数的引用，避免重复
+    compute_metrics_fn = metrics_module.compute_metrics if metrics_module is not None else None
+    
     if task_type == 'seq2seq':
         # S2S 任务特有的参数
         seq2seq_extra_args = {
@@ -174,20 +187,24 @@ def main(task_name: str, resume_from: str = None):
             'generation_max_length': model_data_cfg.get('max_target_length', 128) # 生成摘要的最大长度
         }
         training_args = Seq2SeqTrainingArguments(**common_args, **seq2seq_extra_args)
-        compute_metrics_fn = partial(metrics_module.compute_metrics, tokenizer=tokenizer)
+        if compute_metrics_fn is not None:
+            compute_metrics_fn = partial(compute_metrics_fn, tokenizer=tokenizer)
     elif task_type == 'causalLM':
         # causalLM 任务使用标准训练参数
         training_args = TrainingArguments(**common_args)
-        compute_metrics_fn = metrics_module.compute_metrics
     else:
         training_args = TrainingArguments(**common_args)
-        compute_metrics_fn = metrics_module.compute_metrics
 
     # --- 7. 初始化 Trainer (优雅地处理 compute_metrics) ---
     callbacks = []
     if training_cfg.get('log_distribution', False):
         print("📊 启用参数和梯度分布记录...")
         callbacks.append(DistributionLoggingCallback())
+    
+    # 为causalLM任务添加PerplexityLoggingCallback支持
+    if training_cfg.get('log_ppl', False):
+        print("📊 启用困惑度记录...")
+        callbacks.append(PerplexityLoggingCallback())
 
     # 根据任务类型选择 Trainer 和 DataCollator
     if task_type == 'seq2seq':

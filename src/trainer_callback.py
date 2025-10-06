@@ -1,4 +1,5 @@
 import os
+import math
 from torch.utils.tensorboard import SummaryWriter
 from transformers import TrainerCallback, TrainingArguments, TrainerState, TrainerControl
 
@@ -63,6 +64,58 @@ class DistributionLoggingCallback(TrainerCallback):
                             param.grad.detach().cpu().numpy(),
                             state.global_step
                         )
+                self.tb_writer.flush()
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if self.tb_writer:
+            self.tb_writer.close()
+
+
+class PerplexityLoggingCallback(TrainerCallback):
+    """
+    用于在TensorBoard中记录困惑度指标。
+    """
+    
+    def __init__(self):
+        self.tb_writer = None
+
+    def on_init_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        if state.is_world_process_zero:
+            log_dir = args.logging_dir
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+                self.tb_writer = SummaryWriter(log_dir=log_dir)
+                print(f"PerplexityLoggingCallback: TensorBoard writer initialized in '{log_dir}'.")
+
+        if self.tb_writer is None and state.is_world_process_zero:
+            print("PerplexityLoggingCallback: Warning: logging_dir is not set. Perplexity will not be logged.")
+
+    def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics=None, **kwargs):
+        if metrics and 'eval_loss' in metrics:
+            eval_loss = metrics['eval_loss']
+            try:
+                perplexity = math.exp(eval_loss)
+                metrics['eval_perplexity'] = perplexity
+            except OverflowError:
+                metrics['eval_perplexity'] = float('inf')
+
+    def on_log(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, logs=None, **kwargs):
+        """
+        在日志记录事件中，检查是否存在评估损失（eval_loss），如果存在则计算困惑度并记录到TensorBoard。
+        """
+        # 使用独立的TensorBoard writer记录困惑度
+        if self.tb_writer and state.is_world_process_zero and logs is not None and 'eval_loss' in logs:
+            eval_loss = logs['eval_loss']
+            try:
+                # 计算困惑度 PPL = exp(loss)
+                perplexity = math.exp(eval_loss)
+                logs['eval_perplexity'] = perplexity
+                # 直接记录到TensorBoard
+                self.tb_writer.add_scalar('eval/perplexity', perplexity, state.global_step)
+                self.tb_writer.flush()
+            except OverflowError:
+                logs['eval_perplexity'] = float('inf')
+                self.tb_writer.add_scalar('eval/perplexity', float('inf'), state.global_step)
                 self.tb_writer.flush()
 
     def on_train_end(self, args, state, control, **kwargs):
