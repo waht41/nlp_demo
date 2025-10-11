@@ -3,22 +3,29 @@ import yaml
 import shutil
 import argparse
 import pandas as pd
+import torch
 from datetime import datetime
 import importlib
 from functools import partial
+
 from transformers import (
-    TrainingArguments, Trainer, 
+    TrainingArguments, Trainer,
     Seq2SeqTrainingArguments, Seq2SeqTrainer,
     AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM, AutoModelForCausalLM,
-    DataCollatorForSeq2Seq, DataCollatorForLanguageModeling
+    DataCollatorForSeq2Seq, DataCollatorForLanguageModeling,
+    BitsAndBytesConfig
 )
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTTrainer
+
 from trainer_callback import DistributionLoggingCallback, PerplexityLoggingCallback
 from utils.git import get_git_info
+
 
 # --- 主函数开始 ---
 def main(task_name: str, resume_from: str = None):
     """主函数，从指定的任务目录执行完整的训练和评估流程
-    
+
     Args:
         task_name: 要执行的任务名称
         resume_from: 可选，指定要从哪个检查点继续训练
@@ -28,23 +35,19 @@ def main(task_name: str, resume_from: str = None):
     print(f"🚀 开始执行任务: {task_name}")
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     TASKS_DIR = os.path.join(SCRIPT_DIR, "tasks")
-    config_path = os.path.join(TASKS_DIR,task_name, "config.yaml")
+    config_path = os.path.join(TASKS_DIR, task_name, "config.yaml")
 
-
-    # 先加载配置，然后根据配置决定是否需要导入metrics模块
     print(f"📖 从 '{config_path}' 加载配置...")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
-    
+
     metadata_cfg = config.get('metadata', {})
     model_data_cfg = config.get('model_data', {})
     training_cfg = config.get('training', {})
-    
-    # 读取任务类型，这是关键！
+
     task_type = model_data_cfg.get('task_type', 'classification')
-    if task_type and task_type not in ['classification', 'seq2seq', 'causalLM']:
-        print('未知任务类型')
-        return
+    if task_type not in ['classification', 'seq2seq', 'causalLM']:
+        raise ValueError(f"未知的任务类型: {task_type}")
 
     print(f"检测到任务类型: {task_type}")
 
@@ -54,13 +57,9 @@ def main(task_name: str, resume_from: str = None):
         
         # 根据配置决定是否需要导入metrics模块
         ignore_metrics = training_cfg.get('ignore_compute_metric', False)
-        
-        if not ignore_metrics:
-            metrics_module = importlib.import_module(f"tasks.{task_name}.metrics")
-        else:
-            metrics_module = None
+        metrics_module = None if ignore_metrics else importlib.import_module(f"tasks.{task_name}.metrics")
+        if ignore_metrics:
             print("📊 跳过metrics模块导入（根据配置ignore_compute_metric=true）")
-            
     except ModuleNotFoundError as e:
         print(f"错误: 导入任务 '{task_name}' 相关模块时失败。")
         print(f"具体错误: {str(e)}")
@@ -88,9 +87,9 @@ def main(task_name: str, resume_from: str = None):
     shutil.copy(config_path, os.path.join(LOGGING_DIR, "config.yaml"))
     git_hash = get_git_info(LOGGING_DIR)
 
-    # --- 4. 加载数据集 (调用动态导入的模块) ---
+    # --- 4. 加载数据集 ---
     print("\n" + "=" * 20 + " 正在加载数据集 " + "=" * 20)
-    tokenizer = AutoTokenizer.from_pretrained(model_data_cfg['model_checkpoint'])
+    tokenizer = AutoTokenizer.from_pretrained(model_data_cfg['model_checkpoint'], trust_remote_code=True)
 
     # 这里 data_handler.py 内部会处理不同任务的逻辑
     # 封装通用参数，避免重复
@@ -101,13 +100,13 @@ def main(task_name: str, resume_from: str = None):
         'eval_sample_size': model_data_cfg.get('eval_sample_size'),
         'dataset_config_name': model_data_cfg.get('dataset_config_name'),
     }
-    
+
     if task_type == 'seq2seq':
         # 只有 seq2seq 任务才传递这两个参数
         datasets_and_labels = data_handler_module.load_and_prepare_dataset(
             **common_dataset_args,
-            max_source_length=model_data_cfg.get('max_source_length'), # 为 S2S 任务增加参数
-            max_target_length=model_data_cfg.get('max_target_length')  # 为 S2S 任务增加参数
+            max_source_length=model_data_cfg.get('max_source_length'),
+            max_target_length=model_data_cfg.get('max_target_length')
         )
     elif task_type == 'causalLM':
         # 为 causalLM 任务设置 pad_token
@@ -117,12 +116,10 @@ def main(task_name: str, resume_from: str = None):
             print('添加eos_token <|endoftext|>')
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        # causalLM 任务传递最大长度参数
         datasets_and_labels = data_handler_module.load_and_prepare_dataset(
             **common_dataset_args,
-            max_length=model_data_cfg.get('max_length', 512)  # 为 causalLM 任务增加参数
+            max_length=model_data_cfg.get('max_length', 1024)
         )
-
     else:
         # 分类任务使用原有的参数
         datasets_and_labels = data_handler_module.load_and_prepare_dataset(**common_dataset_args)
@@ -137,134 +134,129 @@ def main(task_name: str, resume_from: str = None):
     model_path = resume_from if resume_from else model_data_cfg['model_checkpoint']
     print(f"📂 从 '{model_path}' 加载...")
 
+    # 在 causalLM 逻辑块外部定义 lora_config，以便 Trainer 部分可以访问
+    lora_config = None
+
     if task_type == 'seq2seq':
         model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
     elif task_type == 'causalLM':
-        model = AutoModelForCausalLM.from_pretrained(model_path)
-    else: # 默认为 classification
+        # --- LLM 高效微调的核心逻辑 ---
+        quantization_cfg = training_cfg.get('quantization')
+        bnb_config = None
+        if quantization_cfg and quantization_cfg.get('load_in_4bit', False):
+            print("💡 启用 4-bit 量化加载...")
+            compute_dtype = getattr(torch, quantization_cfg.get('bnb_4bit_compute_dtype', 'float16'))
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=quantization_cfg.get('bnb_4bit_use_double_quant', True),
+                bnb_4bit_quant_type=quantization_cfg.get('bnb_4bit_quant_type', "nf4"),
+                bnb_4bit_compute_dtype=compute_dtype
+            )
+
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True
+        )
+
+        if training_cfg.get('use_peft', False):
+            print("🚀 应用 PEFT (LoRA) 配置...")
+            model = prepare_model_for_kbit_training(model)
+            peft_lora_cfg = training_cfg.get('peft_lora')
+            if not peft_lora_cfg:
+                raise ValueError("配置错误: use_peft=true 但 peft_lora 配置块不存在！")
+            lora_config = LoraConfig(**peft_lora_cfg)
+            model = get_peft_model(model, lora_config)
+            print("LoRA 模型参数:")
+            model.print_trainable_parameters()
+    else:  # 默认为 classification
         model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
 
     if model_data_cfg.get('force_contiguous', False):
-        for param in model.parameters(): param.data = param.data.contiguous()
+        model = model.to_contiguous()
 
-    # --- 6. 根据 task_type 配置训练参数 ---
+    # --- 6. 配置训练参数 ---
     print("\n" + "=" * 20 + " 正在配置训练参数 " + "=" * 20)
-    
-    # 通用参数
     common_args = {
-        'output_dir': OUTPUT_DIR,
-        'logging_dir': LOGGING_DIR,
-        'report_to': "tensorboard",
-        'run_name': run_id,
-        'optim': training_cfg.get('optimizer', 'adamw_torch'),
+        'output_dir': OUTPUT_DIR, 'logging_dir': LOGGING_DIR, 'report_to': "tensorboard",
+        'run_name': run_id, 'optim': training_cfg.get('optimizer', 'adamw_torch'),
         'gradient_accumulation_steps': training_cfg.get('gradient_accumulation_steps', 1),
         'num_train_epochs': training_cfg['num_train_epochs'],
         'per_device_train_batch_size': training_cfg['per_device_train_batch_size'],
-        'per_device_eval_batch_size': training_cfg.get('per_device_eval_batch_size', training_cfg['per_device_train_batch_size']),
+        'per_device_eval_batch_size': training_cfg.get('per_device_eval_batch_size',
+                                                       training_cfg['per_device_train_batch_size']),
         'learning_rate': float(training_cfg['learning_rate']),
         'weight_decay': training_cfg.get('weight_decay', 0.0),
         'max_grad_norm': training_cfg.get('max_grad_norm', 1.0),
         'warmup_ratio': training_cfg.get('warmup_ratio', 0.0),
         'lr_scheduler_type': training_cfg.get('lr_scheduler_type', 'linear'),
         'eval_strategy': training_cfg.get('eval_strategy', 'epoch'),
-        'eval_steps': training_cfg.get('eval_steps') if training_cfg.get('eval_strategy', 'epoch') == 'steps' else None,
-        'save_strategy': training_cfg.get('eval_strategy', 'epoch'),
-        'save_steps': training_cfg.get('save_steps', None) if training_cfg.get('eval_strategy', 'epoch') == 'steps' else None,
+        'save_strategy': training_cfg.get('save_strategy', 'epoch'),
+        'eval_steps': training_cfg.get('eval_steps') if training_cfg.get('eval_strategy') == 'steps' else None,
+        'save_steps': training_cfg.get('save_steps') if training_cfg.get('save_strategy') == 'steps' else None,
         'load_best_model_at_end': True,
         'logging_strategy': "steps",
         'logging_steps': training_cfg.get('logging_steps', 50),
-        'fp16': training_cfg.get('fp16', True),
+        'fp16': training_cfg.get('fp16', False),
+        'bf16': training_cfg.get('bf16', False),
         'torch_compile': training_cfg.get('torch_compile', False),
     }
+    compute_metrics_fn = partial(metrics_module.compute_metrics,
+                                 tokenizer=tokenizer) if metrics_module and task_type == 'seq2seq' else \
+        metrics_module.compute_metrics if metrics_module else None
 
-    # 创建compute_metrics函数的引用，避免重复
-    compute_metrics_fn = metrics_module.compute_metrics if metrics_module is not None else None
-    
     if task_type == 'seq2seq':
-        # S2S 任务特有的参数
-        seq2seq_extra_args = {
-            'predict_with_generate': True,
-            'generation_max_length': model_data_cfg.get('max_target_length', 128) # 生成摘要的最大长度
-        }
-        training_args = Seq2SeqTrainingArguments(**common_args, **seq2seq_extra_args)
-        if compute_metrics_fn is not None:
-            compute_metrics_fn = partial(compute_metrics_fn, tokenizer=tokenizer)
-    elif task_type == 'causalLM':
-        # causalLM 任务使用标准训练参数
-        training_args = TrainingArguments(**common_args)
+        training_args = Seq2SeqTrainingArguments(**common_args, predict_with_generate=True,
+                                                 generation_max_length=model_data_cfg.get('max_target_length', 128))
     else:
         training_args = TrainingArguments(**common_args)
 
-    # --- 7. 初始化 Trainer (优雅地处理 compute_metrics) ---
+    # --- 7. 初始化 Trainer ---
     callbacks = []
-    if training_cfg.get('log_distribution', False):
-        print("📊 启用参数和梯度分布记录...")
+    if training_cfg.get('log_distribution'):
         callbacks.append(DistributionLoggingCallback())
-    
-    # 为causalLM任务添加PerplexityLoggingCallback支持
-    if training_cfg.get('log_ppl', False):
-        print("📊 启用困惑度记录...")
+    if training_cfg.get('log_ppl'):
         callbacks.append(PerplexityLoggingCallback())
 
-    # 根据任务类型选择 Trainer 和 DataCollator
     if task_type == 'seq2seq':
-        TrainerClass = Seq2SeqTrainer
-        # 为 seq2seq 任务创建 DataCollatorForSeq2Seq
-        if training_cfg.get('torch_compile', False):
-            data_collator = DataCollatorForSeq2Seq(
-                tokenizer=tokenizer,
+        data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model, pad_to_multiple_of=8)
+        trainer = Seq2SeqTrainer(model=model, args=training_args, train_dataset=train_dataset,
+                                 eval_dataset=eval_dataset,
+                                 tokenizer=tokenizer, data_collator=data_collator, compute_metrics=compute_metrics_fn,
+                                 callbacks=callbacks)
+    elif task_type == 'causalLM':
+        if training_cfg.get('use_peft', False):
+            print("使用 TRL 的 SFTTrainer 进行 PEFT 微调...")
+            trainer = SFTTrainer(
                 model=model,
-                padding="max_length",
-                pad_to_multiple_of=8,
-                max_length=model_data_cfg.get('max_source_length', 1024),
+                args=training_args,
+                train_dataset=train_dataset,
+                eval_dataset=eval_dataset,
+                peft_config=lora_config,
+                data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8),
+                callbacks=callbacks,
             )
         else:
-            data_collator = DataCollatorForSeq2Seq(
-                tokenizer=tokenizer,
-                model=model,
-                padding=True,
-                pad_to_multiple_of=8,
-            )
-    elif task_type == 'causalLM':
-        TrainerClass = Trainer
-        # 为 causalLM 任务创建 DataCollatorForLanguageModeling
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=False,  # 对于 causalLM，我们使用 CLM (Causal Language Modeling)，不是 MLM
-            pad_to_multiple_of=8,
-        )
-    else:
-        TrainerClass = Trainer
-        data_collator = None  # 分类任务使用默认的data collator
-    
-    trainer = TrainerClass(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        data_collator=data_collator,  # 传递data collator
-        compute_metrics=compute_metrics_fn,  # 传递新创建的函数
-        callbacks=callbacks
-    )
+            data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
+            trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=eval_dataset,
+                              tokenizer=tokenizer, data_collator=data_collator, compute_metrics=compute_metrics_fn,
+                              callbacks=callbacks)
+    else:  # classification
+        trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=eval_dataset,
+                          compute_metrics=compute_metrics_fn, callbacks=callbacks)
 
-    # ... [你原来的训练、评估、保存总结的逻辑完全不变] ...
+    # --- 8. 开始训练 ---
     print("\n" + "=" * 40 + "\n          🔥 开始模型训练 🔥          \n" + "=" * 40 + "\n")
-    
-    # 如果指定了恢复训练的检查点，从检查点恢复训练状态
-    if resume_from:
-        print(f"🔄 从检查点恢复训练状态: {resume_from}")
-        trainer.train(resume_from_checkpoint=resume_from)
-    else:
-        trainer.train()
-        
+    train_kwargs = {'resume_from_checkpoint': resume_from} if resume_from else {}
+    trainer.train(**train_kwargs)
     print("\n" + "=" * 40 + "\n          ✅ 训练完成 ✅          \n" + "=" * 40 + "\n")
 
+    # --- 9. 最终评估和日志记录 ---
     print("在最终评估集上进行评估...")
     final_metrics = trainer.evaluate(eval_dataset)
     print("最终评估结果:", final_metrics)
 
-    # ... [保存 summary 到 experiments.csv 的逻辑] ...
     summary = {
         'task': task_name,
         'run_id': run_id,
@@ -282,16 +274,9 @@ def main(task_name: str, resume_from: str = None):
         'results_path': OUTPUT_DIR,
         'addition': f'train from {resume_from}' if resume_from else '',
     }
-
     log_file = "./experiments.csv"
     summary_df = pd.DataFrame([summary])
-
-    # 线程安全地追加到 CSV 文件
-    if not os.path.exists(log_file):
-        summary_df.to_csv(log_file, index=False, encoding='utf-8-sig')
-    else:
-        summary_df.to_csv(log_file, mode='a', header=False, index=False, encoding='utf-8-sig')
-
+    summary_df.to_csv(log_file, mode='a', header=not os.path.exists(log_file), index=False, encoding='utf-8-sig')
     print("\n" + "=" * 40)
     print(f"   📊 实验总结已记录到中央日志: {log_file}   ")
     print("=" * 40 + "\n")
@@ -299,21 +284,20 @@ def main(task_name: str, resume_from: str = None):
     # --- 10. 保存最终模型 ---
     final_model_path = os.path.join(OUTPUT_DIR, "final_model")
     trainer.save_model(final_model_path)
-    print(f"最佳模型已保存至: {final_model_path}")
+    if training_cfg.get('use_peft', False):  # 如果是 LoRA 训练，额外保存 tokenizer
+        tokenizer.save_pretrained(final_model_path)
+    print(f"最佳模型（或适配器）已保存至: {final_model_path}")
     print(f"要查看训练日志，请在终端运行: tensorboard --logdir ./logs")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="从指定的任务目录运行模型训练。")
     parser.add_argument(
-        "--task",
-        type=str,
-        required=True,
-        help="要执行的任务名称 (必须是 tasks/ 目录下的一个子文件夹名，例如: rotten_tomatoes)"
+        "--task", type=str, required=True,
+        help="要执行的任务名称 (必须是 tasks/ 目录下的一个子文件夹名)"
     )
     parser.add_argument(
-        "--resume",
-        type=str,
+        "--resume", type=str,
         help="指定检查点文件夹路径，从该检查点继续训练"
     )
     args = parser.parse_args()

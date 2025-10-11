@@ -11,7 +11,7 @@ version = "0.1.0"
 description = "一个使用Transformers实现的简单文本项目。"
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
-packages = [{include = "hello_wsl"}]
+packages = [{include = "nlp_demo", from = "src"}]
 
 # ==============================================================================
 # 核心依赖 (项目运行所必需的包)
@@ -25,10 +25,13 @@ torchvision = {version = "^0.18.1", source = "pytorch_cu121"}
 torchaudio = {version = "^2.3.1", source = "pytorch_cu121"}
 
 # --- Hugging Face 核心生态 ---
-transformers = "4.43"
+transformers = "^4.57.0"
 accelerate = "^1.10.0"
 datasets = "^4.0.0"
 evaluate = "^0.4.6"       # HuggingFace的评估库
+bitsandbytes = "0.48.1"
+trl = "^0.23.1"
+peft = "0.17.1"
 
 # --- 通用数据科学库 ---
 # 这些库的API相对稳定，向后兼容性好，可以暂时不更新。
